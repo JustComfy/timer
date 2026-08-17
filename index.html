@@ -159,6 +159,11 @@
     <div class="presets" id="presetContainer"></div>
   </div>
 
+  <!-- Silent background loop audio element -->
+  <audio id="silentAudio" loop style="display: none;">
+    <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" type="audio/wav">
+  </audio>
+
   <script>
     let audioCtx = null;
     let timerId = null;
@@ -172,6 +177,7 @@
     let currentRepeat = 0;
     let totalRepeats = 0;
     let timeRemaining = 0;
+    let expectedEndTime = 0;
 
     function initAudio() {
       if (!audioCtx) {
@@ -179,6 +185,24 @@
       }
       if (audioCtx.state === 'suspended') {
         audioCtx.resume();
+      }
+      // Force iOS audio session into media playback mode
+      if (navigator.audioSession) {
+        navigator.audioSession.type = 'playback';
+      }
+    }
+
+    function startBackgroundAudio() {
+      const audioEl = document.getElementById('silentAudio');
+      if (audioEl) {
+        audioEl.play().catch(e => console.log("Background audio start:", e));
+      }
+    }
+
+    function stopBackgroundAudio() {
+      const audioEl = document.getElementById('silentAudio');
+      if (audioEl) {
+        audioEl.pause();
       }
     }
 
@@ -229,7 +253,7 @@
     }
 
     function startAlarm() {
-      stopAlarm(); // Clear any playing alarm
+      stopAlarm();
 
       const soundType = document.getElementById('soundSelect').value;
       const durationSec = parseFloat(document.getElementById('beepDurationSelect').value);
@@ -237,13 +261,11 @@
       isRinging = true;
       document.getElementById('silenceBtn').style.display = 'block';
 
-      // Play sound repeatedly every 500ms
       playPulse(soundType);
       alarmPulseId = setInterval(() => {
         playPulse(soundType);
       }, 500);
 
-      // Auto-silence after specified duration (unless set to 0/continuous)
       if (durationSec > 0) {
         alarmTimeoutId = setTimeout(() => {
           stopAlarm();
@@ -267,7 +289,7 @@
     }
 
     function updateDisplay() {
-      document.getElementById('timerDisplay').innerText = formatTime(timeRemaining);
+      document.getElementById('timerDisplay').innerText = formatTime(Math.max(0, timeRemaining));
       if (isRunning) {
         const repText = totalRepeats === 0 ? `Loop ${currentRepeat + 1}` : `Repeat ${currentRepeat + 1}/${totalRepeats}`;
         document.getElementById('statusDisplay').innerText = `Step ${currentIntervalIdx + 1} of ${intervals.length} (${repText})`;
@@ -299,17 +321,21 @@
       currentIntervalIdx = 0;
       currentRepeat = 0;
       timeRemaining = intervals[0];
+      expectedEndTime = Date.now() + timeRemaining * 1000;
+
+      startBackgroundAudio();
 
       document.getElementById('startBtn').innerText = "Stop";
       document.getElementById('startBtn').className = "btn-danger";
 
       updateDisplay();
-      timerId = setInterval(tick, 1000);
+      timerId = setInterval(tick, 200);
     }
 
     function stopTimer() {
       clearInterval(timerId);
       stopAlarm();
+      stopBackgroundAudio();
       isRunning = false;
       document.getElementById('startBtn').innerText = "Start";
       document.getElementById('startBtn').className = "btn-primary";
@@ -317,7 +343,8 @@
     }
 
     function tick() {
-      timeRemaining--;
+      const now = Date.now();
+      timeRemaining = Math.ceil((expectedEndTime - now) / 1000);
 
       if (timeRemaining <= 0) {
         startAlarm();
@@ -330,6 +357,7 @@
 
           if (totalRepeats > 0 && currentRepeat >= totalRepeats) {
             clearInterval(timerId);
+            stopBackgroundAudio();
             isRunning = false;
             document.getElementById('startBtn').innerText = "Start";
             document.getElementById('startBtn').className = "btn-primary";
@@ -339,6 +367,7 @@
         }
 
         timeRemaining = intervals[currentIntervalIdx];
+        expectedEndTime = now + timeRemaining * 1000;
       }
 
       updateDisplay();
