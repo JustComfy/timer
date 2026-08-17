@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Interval Timer</title>
+  <apple-mobile-web-app-capable content="yes">
+  <apple-mobile-web-app-status-bar-style content="black-translucent">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--accent); }
+    .card {
+      background: var(--card);
+      padding: 18px;
+      border-radius: 16px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+    .display {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .time-large {
+      font-size: 4rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+    }
+    .status-text {
+      font-size: 1rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+    input, select {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: var(--text);
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    button {
+      flex: 1;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: #0f172a; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-warning { background: #f59e0b; color: #0f172a; }
+    .btn-secondary { background: #334155; color: white; }
+    button:active { opacity: 0.8; }
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .chip {
+      background: #334155;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    #silenceBtn {
+      display: none;
+      width: 100%;
+      margin-top: 12px;
+      animation: pulse 1s infinite alternate;
+    }
+    @keyframes pulse {
+      from { opacity: 1; }
+      to { opacity: 0.6; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Custom Interval Timer</h1>
+
+  <div class="card display">
+    <div class="time-large" id="timerDisplay">00:00</div>
+    <div class="status-text" id="statusDisplay">Ready</div>
+    <button class="btn-warning" id="silenceBtn" onclick="stopAlarm()">Silence Beep 🔕</button>
+  </div>
+
+  <div class="card">
+    <label for="patternInput">Interval Pattern (seconds, comma separated)</label>
+    <input type="text" id="patternInput" value="10, 5, 10" placeholder="e.g. 30, 10, 30">
+
+    <label for="repeatInput">Repeat Count (0 for infinite)</label>
+    <input type="number" id="repeatInput" value="3" min="0">
+
+    <label for="soundSelect">Alert Sound</label>
+    <select id="soundSelect">
+      <option value="beep">Standard Beep</option>
+      <option value="high">High Pitch</option>
+      <option value="low">Low Tone</option>
+      <option value="double">Double Beep</option>
+    </select>
+
+    <label for="beepDurationSelect">Beep Duration</label>
+    <select id="beepDurationSelect">
+      <option value="0.5">0.5 Seconds (Short)</option>
+      <option value="2">2 Seconds</option>
+      <option value="5" selected>5 Seconds</option>
+      <option value="10">10 Seconds</option>
+      <option value="0">Until Toggled Off (Continuous)</option>
+    </select>
+
+    <div class="btn-group">
+      <button class="btn-primary" id="startBtn" onclick="toggleTimer()">Start</button>
+      <button class="btn-secondary" onclick="savePreset()">Save Preset</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Saved Presets</label>
+    <div class="presets" id="presetContainer"></div>
+  </div>
+
+  <script>
+    let audioCtx = null;
+    let timerId = null;
+    let alarmPulseId = null;
+    let alarmTimeoutId = null;
+    let isRunning = false;
+    let isRinging = false;
+    
+    let intervals = [];
+    let currentIntervalIdx = 0;
+    let currentRepeat = 0;
+    let totalRepeats = 0;
+    let timeRemaining = 0;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playPulse(type) {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      const now = audioCtx.currentTime;
+
+      if (type === 'beep') {
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      } else if (type === 'high') {
+        osc.frequency.value = 1400;
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      } else if (type === 'low') {
+        osc.frequency.value = 440;
+        gain.gain.setValueAtTime(0.6, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.start(now);
+        osc.stop(now + 0.35);
+      } else if (type === 'double') {
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        osc.start(now);
+        osc.stop(now + 0.12);
+
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.frequency.value = 880;
+        gain2.gain.setValueAtTime(0.5, now + 0.15);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.27);
+        osc2.start(now + 0.15);
+        osc2.stop(now + 0.27);
+      }
+    }
+
+    function startAlarm() {
+      stopAlarm(); // Clear any playing alarm
+
+      const soundType = document.getElementById('soundSelect').value;
+      const durationSec = parseFloat(document.getElementById('beepDurationSelect').value);
+
+      isRinging = true;
+      document.getElementById('silenceBtn').style.display = 'block';
+
+      // Play sound repeatedly every 500ms
+      playPulse(soundType);
+      alarmPulseId = setInterval(() => {
+        playPulse(soundType);
+      }, 500);
+
+      // Auto-silence after specified duration (unless set to 0/continuous)
+      if (durationSec > 0) {
+        alarmTimeoutId = setTimeout(() => {
+          stopAlarm();
+        }, durationSec * 1000);
+      }
+    }
+
+    function stopAlarm() {
+      if (alarmPulseId) clearInterval(alarmPulseId);
+      if (alarmTimeoutId) clearTimeout(alarmTimeoutId);
+      alarmPulseId = null;
+      alarmTimeoutId = null;
+      isRinging = false;
+      document.getElementById('silenceBtn').style.display = 'none';
+    }
+
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = (sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function updateDisplay() {
+      document.getElementById('timerDisplay').innerText = formatTime(timeRemaining);
+      if (isRunning) {
+        const repText = totalRepeats === 0 ? `Loop ${currentRepeat + 1}` : `Repeat ${currentRepeat + 1}/${totalRepeats}`;
+        document.getElementById('statusDisplay').innerText = `Step ${currentIntervalIdx + 1} of ${intervals.length} (${repText})`;
+      } else {
+        document.getElementById('statusDisplay').innerText = "Ready";
+      }
+    }
+
+    function toggleTimer() {
+      initAudio();
+      if (isRunning) {
+        stopTimer();
+      } else {
+        startTimer();
+      }
+    }
+
+    function startTimer() {
+      const rawPattern = document.getElementById('patternInput').value;
+      intervals = rawPattern.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0);
+      totalRepeats = parseInt(document.getElementById('repeatInput').value) || 0;
+
+      if (intervals.length === 0) {
+        alert("Please enter valid positive numbers for intervals.");
+        return;
+      }
+
+      isRunning = true;
+      currentIntervalIdx = 0;
+      currentRepeat = 0;
+      timeRemaining = intervals[0];
+
+      document.getElementById('startBtn').innerText = "Stop";
+      document.getElementById('startBtn').className = "btn-danger";
+
+      updateDisplay();
+      timerId = setInterval(tick, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(timerId);
+      stopAlarm();
+      isRunning = false;
+      document.getElementById('startBtn').innerText = "Start";
+      document.getElementById('startBtn').className = "btn-primary";
+      document.getElementById('statusDisplay').innerText = "Stopped";
+    }
+
+    function tick() {
+      timeRemaining--;
+
+      if (timeRemaining <= 0) {
+        startAlarm();
+
+        currentIntervalIdx++;
+
+        if (currentIntervalIdx >= intervals.length) {
+          currentIntervalIdx = 0;
+          currentRepeat++;
+
+          if (totalRepeats > 0 && currentRepeat >= totalRepeats) {
+            clearInterval(timerId);
+            isRunning = false;
+            document.getElementById('startBtn').innerText = "Start";
+            document.getElementById('startBtn').className = "btn-primary";
+            document.getElementById('statusDisplay').innerText = "Completed!";
+            return;
+          }
+        }
+
+        timeRemaining = intervals[currentIntervalIdx];
+      }
+
+      updateDisplay();
+    }
+
+    function savePreset() {
+      const pattern = document.getElementById('patternInput').value;
+      if (!pattern) return;
+
+      let presets = JSON.parse(localStorage.getItem('timer_presets') || '[]');
+      if (!presets.includes(pattern)) {
+        presets.push(pattern);
+        localStorage.setItem('timer_presets', JSON.stringify(presets));
+        renderPresets();
+      }
+    }
+
+    function renderPresets() {
+      const container = document.getElementById('presetContainer');
+      const presets = JSON.parse(localStorage.getItem('timer_presets') || '[]');
+      container.innerHTML = '';
+      
+      presets.forEach(p => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.innerText = p;
+        chip.onclick = () => {
+          document.getElementById('patternInput').value = p;
+        };
+        container.appendChild(chip);
+      });
+    }
+
+    renderPresets();
+  </script>
+</body>
+</html>
